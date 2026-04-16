@@ -1,0 +1,94 @@
+{
+  "entities": {
+    "SensorData": {
+      "title": "SensorData",
+      "description": "Real-time water quality metrics from IoT sensors.",
+      "type": "object",
+      "properties": {
+        "sensorId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "ph": { "type": "number" },
+            "turbidity": { "type": "number" },
+            "tds": { "type": "number" },
+            "chlorine": { "type": "number" }
+          }
+        },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "name": { "type": "string" }
+          }
+        }
+      },
+      "required": ["sensorId", "timestamp", "metrics"]
+    },
+    "Alert": {
+      "title": "Alert",
+      "description": "Detected contamination anomalies.",
+      "type": "object",
+      "properties": {
+        "sensorId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "type": { "type": "string", "enum": ["CHEMICAL", "BIOLOGICAL", "PHYSICAL", "UNKNOWN"] },
+        "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "message": { "type": "string" },
+        "metrics": { "$ref": "SensorData.properties.metrics" },
+        "actions": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "string" },
+        "aiAnalysis": { "type": "string" }
+      },
+      "required": ["sensorId", "timestamp", "severity", "priority", "actions"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Registered application user with role-based permissions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["ADMIN", "OPERATOR", "VIEWER"] },
+        "lastLogin": { "type": "string", "format": "date-time" },
+        "displayName": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System audit trail for user actions.",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "resourceId": { "type": "string" }
+      },
+      "required": ["timestamp", "userId", "action"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles."
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "System-wide activity logs."
+    },
+    "/sensors/{sensorId}/readings/{readingId}": {
+      "schema": "SensorData",
+      "description": "Historical readings for a specific sensor."
+    },
+    "/alerts/{alertId}": {
+      "schema": "Alert",
+      "description": "Global list of detected alerts."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "HydroGuard: Real-Time Water Contamination Detection",
+  "description": "An IoT-driven monitoring system for real-time water quality analysis, anomaly detection, and contamination classification using Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["Real-time Data Visualization", "AI Contamination Classification", "IoT Sensor Simulation"]
+}

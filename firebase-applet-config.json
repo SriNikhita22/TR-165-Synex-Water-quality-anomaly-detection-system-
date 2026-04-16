@@ -1,0 +1,9 @@
+{
+  "apiKey": "demo-key-replace-me",
+  "authDomain": "demo-project.firebaseapp.com",
+  "projectId": "demo-project",
+  "storageBucket": "demo-project.appspot.com",
+  "messagingSenderId": "000000000",
+  "appId": "1:0000000:web:000000",
+  "firestoreDatabaseId": "(default)"
+}
