@@ -24,10 +24,40 @@ import { initializeApp, getApps } from 'firebase/app';
 // Note: In AI Studio, we try to use the provided config or fallback to demo
 import firebaseConfigData from '../../firebase-applet-config.json';
 
-export const firebaseConfig = firebaseConfigData;
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Sanitize config to prevent whitespace issues
+export const firebaseConfig = Object.fromEntries(
+  Object.entries(firebaseConfigData || {}).map(([key, value]) => [
+    key, 
+    typeof value === 'string' ? value.trim() : value
+  ])
+) as any;
+
+const isConfigValid = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'demo-key-replace-me' && firebaseConfig.apiKey.length > 10;
+
+// Log config status (Safe masking)
+if (typeof window !== 'undefined') {
+  console.log('[Firebase Settings Monitor]', {
+    hasKey: !!firebaseConfig.apiKey,
+    keyStart: firebaseConfig.apiKey?.substring(0, 8),
+    projectId: firebaseConfig.projectId,
+    isConfigValid
+  });
+}
+
+let app: any, auth: any, db: any;
+
+try {
+  if (isConfigValid) {
+    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+    auth = getAuth(app);
+    // Be explicit about database ID if provided, otherwise default
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+  }
+} catch (error) {
+  console.error('Firebase initialization error:', error);
+}
+
+export { auth, db };
 
 export type UserRole = 'ADMIN' | 'OPERATOR' | 'VIEWER';
 
@@ -44,6 +74,8 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
+  loginWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   logAction: (action: string, details?: string, resourceId?: string) => Promise<void>;
 }
@@ -60,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Audit Logging
   const logAction = async (action: string, details?: string, resourceId?: string) => {
-    if (!user) return;
+    if (!user || !db) return;
     try {
       await addDoc(collection(db, 'auditLogs'), {
         timestamp: serverTimestamp(),
@@ -76,6 +108,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    if (!auth || !db) {
+      setLoading(false);
+      return;
+    }
+
+    // Connection test as required by security guidelines
+    const testConnection = async () => {
+      try {
+        const { getDocFromServer } = await import('firebase/firestore');
+        await getDocFromServer(doc(db, 'test-connection', 'check'));
+      } catch (error: any) {
+        if (error.message?.includes('the client is offline') || error.message?.includes('api-key-not-valid')) {
+          console.error('Firebase connection failed. Please check your apiKey and authDomain.');
+        }
+      }
+    };
+    testConnection();
+
     // Set persistence to local
     setPersistence(auth, browserLocalPersistence);
 
@@ -140,19 +190,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, lastActivity]);
 
   const loginWithGoogle = async () => {
+    if (!auth) throw new Error('Firebase Auth not initialized. Check your configuration.');
     const provider = new GoogleAuthProvider();
     await signInWithPopup(auth, provider);
   };
 
+  const loginWithEmail = async (email: string, password: string) => {
+    if (!auth) throw new Error('Firebase Auth not initialized. Check your configuration.');
+    await signInWithEmailAndPassword(auth, email, password);
+  };
+
+  const signUpWithEmail = async (email: string, password: string) => {
+    if (!auth) throw new Error('Firebase Auth not initialized. Check your configuration.');
+    const { createUserWithEmailAndPassword } = await import('firebase/auth');
+    await createUserWithEmailAndPassword(auth, email, password);
+  };
+
   const handleLogout = async (reason: string = 'USER_LOGOUT') => {
     if (user) await logAction('LOGOUT', `Logout reason: ${reason}`);
-    await signOut(auth);
+    if (auth) await signOut(auth);
   };
 
   const logout = () => handleLogout('USER_LOGOUT');
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, loginWithGoogle, logout, logAction }}>
+    <AuthContext.Provider value={{ user, profile, loading, loginWithGoogle, loginWithEmail, signUpWithEmail, logout, logAction }}>
       {children}
     </AuthContext.Provider>
   );

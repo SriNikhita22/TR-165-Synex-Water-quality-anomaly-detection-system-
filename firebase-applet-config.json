@@ -1,9 +1,8 @@
 {
-  "apiKey": "demo-key-replace-me",
-  "authDomain": "demo-project.firebaseapp.com",
-  "projectId": "demo-project",
-  "storageBucket": "demo-project.appspot.com",
-  "messagingSenderId": "000000000",
-  "appId": "1:0000000:web:000000",
-  "firestoreDatabaseId": "(default)"
+  "apiKey": "AIzaSyDaf8P_ohdbVYtU7-GeWMcdm1Lb1QDh0Q",
+  "authDomain": "hydroguard-cce2d.firebaseapp.com",
+  "projectId": "hydroguard-cce2d",
+  "storageBucket": "hydroguard-cce2d.firebasestorage.app",
+  "messagingSenderId": "465079745351",
+  "appId": "1:465079745351:web:f565c239f0d3d552796a62"
 }

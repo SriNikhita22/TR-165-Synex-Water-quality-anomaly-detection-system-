@@ -12,6 +12,7 @@ export interface SensorData {
     turbidity: number;
     tds: number;
     chlorine: number;
+    temperature?: number;
   };
 }
 

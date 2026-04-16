@@ -27,6 +27,22 @@
       },
       "required": ["sensorId", "timestamp", "metrics"]
     },
+    "Sensor": {
+      "title": "Sensor",
+      "description": "A node in the water monitoring network.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Warning", "Critical"] },
+        "ph": { "type": "number" },
+        "turbidity": { "type": "number" },
+        "temperature": { "type": "number" },
+        "timestamp": { "type": "object" }
+      },
+      "required": ["id", "name", "status"]
+    },
     "Alert": {
       "title": "Alert",
       "description": "Detected contamination anomalies.",
@@ -85,6 +101,10 @@
     "/sensors/{sensorId}/readings/{readingId}": {
       "schema": "SensorData",
       "description": "Historical readings for a specific sensor."
+    },
+    "/sensors/{docId}": {
+      "schema": "Sensor",
+      "description": "Root sensors collection."
     },
     "/alerts/{alertId}": {
       "schema": "Alert",

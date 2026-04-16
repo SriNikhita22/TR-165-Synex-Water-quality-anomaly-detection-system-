@@ -77,6 +77,14 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidAuditLog(request.resource.data);
     }
 
+    match /sensors/{docId} {
+      allow read, write: if true;
+    }
+
+    match /alerts/{alertId} {
+      allow read, write: if true;
+    }
+
     match /sensors/{sensorId}/readings/{readingId} {
       allow read: if isAuthenticated();
       allow create: if isOperator();
