@@ -199,22 +199,61 @@ function AppContent() {
     };
   }, []);
 
-  // Update history for charts based on live sensors
+  // Update history for charts and jitter map sensor data locally for Vercel live demo realism
   useEffect(() => {
     if (sensors.length === 0) return;
     
     const interval = setInterval(() => {
-      setHistory(prevHistory => {
-        const newPoint = {
-          time: new Date().toLocaleTimeString(),
-          ...sensors.reduce((acc: any, s: any) => {
-            acc[`${s.id}_ph`] = s.ph || s.metrics?.ph;
-            acc[`${s.id}_turbidity`] = s.turbidity || s.metrics?.turbidity;
-            return acc;
-          }, {})
-        };
-        return [...prevHistory.slice(-20), newPoint];
+      setSensors(prevSensors => {
+        // 1. Generate jittered sensors
+        const updatedSensors = prevSensors.map(s => {
+          // Slight hardware random walk to simulate live stream
+          const currentPh = s.ph || s.metrics?.ph || 7.0;
+          const currentTurbidity = s.turbidity || s.metrics?.turbidity || 2.0;
+
+          // Prevent wild spiraling by steering slightly back toward baseline
+          const baselinePh = 7.2; 
+          const phJitter = (Math.random() - 0.5) * 0.4 + (baselinePh - currentPh) * 0.1;
+          
+          const baselineTurb = 3.0;
+          const turbJitter = (Math.random() - 0.5) * 0.8 + (baselineTurb - currentTurbidity) * 0.1;
+
+          const newPh = Number((currentPh + phJitter).toFixed(2));
+          const newTurbidity = Number((currentTurbidity + turbJitter).toFixed(2));
+
+          let newStatus = 'Active';
+          if (newPh < 6.5 || newPh > 8.5 || newTurbidity > 5.0) newStatus = 'Warning';
+          if (newPh < 5.5 || newPh > 9.5 || newTurbidity > 10.0) newStatus = 'Critical';
+
+          return {
+            ...s,
+            ph: newPh,
+            turbidity: newTurbidity,
+            status: newStatus,
+            metrics: {
+              ...(s.metrics || {}),
+              ph: newPh,
+              turbidity: newTurbidity
+            }
+          };
+        });
+
+        // 2. Synchronize the charts array against the jittered state instantly
+        setHistory(prevHistory => {
+          const newPoint = {
+            time: new Date().toLocaleTimeString(),
+            ...updatedSensors.reduce((acc: any, updatedS: any) => {
+              acc[`${updatedS.id}_ph`] = updatedS.metrics.ph;
+              acc[`${updatedS.id}_turbidity`] = updatedS.metrics.turbidity;
+              return acc;
+            }, {})
+          };
+          return [...prevHistory.slice(-20), newPoint];
+        });
+
+        return updatedSensors;
       });
+
       setLastDataTimestamp(Date.now());
     }, 5000);
 
