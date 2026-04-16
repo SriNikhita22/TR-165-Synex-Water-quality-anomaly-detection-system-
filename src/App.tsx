@@ -36,7 +36,7 @@ import L from 'leaflet';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { useTheme } from './components/ThemeProvider';
-import { SensorData, Alert, THRESHOLDS } from './types';
+import { SensorData, Alert } from './types';
 import { GoogleGenAI } from "@google/genai";
 import { db, firebaseConfig } from './lib/firebase';
 import { seedDatabase } from './lib/seedData';
@@ -68,14 +68,19 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 function AppContent() {
   const { theme, toggleTheme } = useTheme();
   const { user, profile, logout, logAction } = useAuth();
-  const [sensorData, setSensorData] = useState<SensorData[]>([]);
+  const [sensorData, setSensorData] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<'dashboard' | 'sensors' | 'alerts' | 'analytics' | 'settings' | 'thresholds' | 'api'>('dashboard');
+  const [THRESHOLDS, setTHRESHOLDS] = useState({
+    PH: { min: 6.5, max: 8.5 },
+    TURBIDITY: { max: 5 }, // NTU
+    TDS: { max: 500 }, // mg/L
+    CHLORINE: { min: 0.2, max: 2.0 }, // mg/L
+  });
   const [lastDataTimestamp, setLastDataTimestamp] = useState<number>(Date.now());
   const [latency, setLatency] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'operator' | 'public'>('operator');
@@ -91,11 +96,12 @@ function AppContent() {
     confidence?: 'LOW' | 'MEDIUM' | 'HIGH',
     sensorCount?: number
   } | null>(null);
+  const [sensors, setSensors] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const hasInitializedMap = useRef(false);
+
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
-  const [firestoreSensors, setFirestoreSensors] = useState<any[]>([]);
-  const [firestoreAlerts, setFirestoreAlerts] = useState<any[]>([]);
-  const hasInitializedMap = useRef(false);
 
   // Seed data on mount
   useEffect(() => {
@@ -106,15 +112,26 @@ function AppContent() {
   useEffect(() => {
     const sensorsRef = collection(db, 'sensors');
     const unsubscribeSensors = onSnapshot(sensorsRef, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setFirestoreSensors(data);
+      const data = snapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data(),
+        // Normalize metrics for legacy components if needed
+        metrics: (doc.data() as any).metrics || {
+          ph: (doc.data() as any).ph,
+          turbidity: (doc.data() as any).turbidity,
+          temperature: (doc.data() as any).temperature,
+          tds: (doc.data() as any).tds || 450,
+          chlorine: (doc.data() as any).chlorine || 1.2
+        }
+      }));
+      setSensors(data);
     });
 
     const alertsRef = collection(db, 'alerts');
     const qAlerts = query(alertsRef, orderBy('timestamp', 'desc'));
     const unsubscribeAlerts = onSnapshot(qAlerts, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setFirestoreAlerts(data);
+      setAlerts(data);
     });
 
     return () => {
@@ -123,8 +140,39 @@ function AppContent() {
     };
   }, []);
 
-  // Remove local firebase logic, using AuthContext version if needed
-  // ... existing simulation logic ...
+  // Update history for charts based on live sensors
+  useEffect(() => {
+    if (sensors.length === 0) return;
+    
+    const interval = setInterval(() => {
+      setHistory(prevHistory => {
+        const newPoint = {
+          time: new Date().toLocaleTimeString(),
+          ...sensors.reduce((acc: any, s: any) => {
+            acc[`${s.id}_ph`] = s.ph || s.metrics?.ph;
+            acc[`${s.id}_turbidity`] = s.turbidity || s.metrics?.turbidity;
+            return acc;
+          }, {})
+        };
+        return [...prevHistory.slice(-20), newPoint];
+      });
+      setLastDataTimestamp(Date.now());
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [sensors]);
+
+  const activeSensor = useMemo(() => 
+    sensors.find(s => s.id === selectedSensor) || sensors[0], 
+  [sensors, selectedSensor]);
+
+  const filteredSensors = useMemo(() => 
+    locationFilter ? sensors.filter(s => s.location === locationFilter) : sensors,
+  [sensors, locationFilter]);
+
+  const uniqueLocations = useMemo(() => 
+    Array.from(new Set(sensors.map(s => s.location))).filter(Boolean),
+  [sensors]);
 
   const getRecommendation = (type: string, severity: string) => {
     const ctype = type.toLowerCase();
@@ -158,113 +206,14 @@ function AppContent() {
     return { actions, notes, priority };
   };
 
-  // Fetch and Simulate Data
-  useEffect(() => {
-    const initialSensors: SensorData[] = [
-      { id: 'SN-001', sensorId: 'SN-001', location: { lat: 28.6139, lng: 77.2090, name: 'Delhi Hub' }, metrics: { ph: 7.2, turbidity: 2.1, tds: 210, chlorine: 0.8 }, timestamp: Date.now() },
-      { id: 'SN-002', sensorId: 'SN-002', location: { lat: 19.0760, lng: 72.8777, name: 'Mumbai Hub' }, metrics: { ph: 7.1, turbidity: 1.8, tds: 190, chlorine: 0.9 }, timestamp: Date.now() },
-      { id: 'SN-003', sensorId: 'SN-003', location: { lat: 13.0827, lng: 80.2707, name: 'Chennai Hub' }, metrics: { ph: 7.4, turbidity: 2.5, tds: 250, chlorine: 0.7 }, timestamp: Date.now() },
-      { id: 'SN-004', sensorId: 'SN-004', location: { lat: 51.5074, lng: -0.1278, name: 'London Hub' }, metrics: { ph: 7.0, turbidity: 1.5, tds: 180, chlorine: 1.0 }, timestamp: Date.now() },
-      { id: 'SN-005', sensorId: 'SN-005', location: { lat: 40.7128, lng: -74.0060, name: 'New York Hub' }, metrics: { ph: 7.3, turbidity: 1.2, tds: 150, chlorine: 1.2 }, timestamp: Date.now() }
-    ];
-
-    setSensorData(initialSensors);
-
-    // 1. Listen for real-time sensor updates (Local Simulation Fallback)
-    const simulationInterval = setInterval(() => {
-      const startTime = performance.now();
-      
-      setSensorData(prev => {
-        const newData = prev.map(s => {
-          const isAnomaly = Math.random() > 0.95; // 5% chance of anomaly
-          const metrics = {
-            ph: isAnomaly ? (Math.random() > 0.5 ? 9.2 : 5.8) : 6.5 + Math.random() * 2.0, // 6.5 - 8.5
-            turbidity: isAnomaly ? 12.5 + Math.random() * 5 : Math.random() * 5.0, // 0 - 5 (normal)
-            tds: 50 + Math.random() * 550, // 50 - 600
-            chlorine: isAnomaly ? 0.05 : 0.2 + Math.random() * 1.3 // 0.2 - 1.5
-          };
-
-          // Check for alerts locally
-          if (metrics.ph < THRESHOLDS.PH.min || metrics.ph > THRESHOLDS.PH.max || metrics.turbidity > THRESHOLDS.TURBIDITY.max) {
-            const type = metrics.turbidity > 10 ? 'PHYSICAL' : metrics.chlorine < 0.1 ? 'BIOLOGICAL' : 'CHEMICAL';
-            const severity = metrics.turbidity > 15 || metrics.ph < 5 ? 'CRITICAL' : 'HIGH';
-            const { actions, notes, priority } = getRecommendation(type, severity);
-
-            const newAlert: Alert = {
-              id: `${s.sensorId}_${Date.now()}`,
-              sensorId: s.sensorId,
-              timestamp: Date.now(),
-              type,
-              severity,
-              priority,
-              message: `Anomaly detected at ${s.location.name}: ${metrics.ph < THRESHOLDS.PH.min ? 'Low pH' : metrics.ph > THRESHOLDS.PH.max ? 'High pH' : 'High Turbidity'}`,
-              metrics,
-              actions,
-              notes
-            };
-
-            setAlerts(prevAlerts => {
-              const exists = prevAlerts.some(a => a.sensorId === s.sensorId && Date.now() - a.timestamp < 30000);
-              if (exists) return prevAlerts;
-              return [newAlert, ...prevAlerts].slice(0, 10);
-            });
-          }
-
-          return { ...s, metrics, timestamp: Date.now() };
-        });
-
-        // Update history for charts
-        setHistory(prevHistory => {
-          const newPoint = {
-            time: new Date().toLocaleTimeString(),
-            ...newData.reduce((acc: any, s: any) => {
-              acc[`${s.sensorId}_ph`] = s.metrics.ph;
-              acc[`${s.sensorId}_turbidity`] = s.metrics.turbidity;
-              return acc;
-            }, {})
-          };
-          return [...prevHistory.slice(-20), newPoint];
-        });
-
-        return newData;
-      });
-
-      setLastDataTimestamp(Date.now());
-      setLatency(Math.round(performance.now() - startTime));
-    }, 3000);
-
-    // 2. Firebase Listeners (Optional if config exists)
-    let unsubscribeSensors: () => void = () => {};
-    let unsubscribeAlerts: () => void = () => {};
-
-    if (firebaseConfig.apiKey !== "demo-key") {
-      const q = query(collection(db, 'sensors'), orderBy('timestamp', 'desc'), limit(10));
-      unsubscribeSensors = onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-        if (data.length > 0) setSensorData(data);
-      });
-
-      const alertsQ = query(collection(db, 'alerts'), orderBy('timestamp', 'desc'), limit(10));
-      unsubscribeAlerts = onSnapshot(alertsQ, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Alert[];
-        setAlerts(data);
-      });
-    }
-
-    return () => {
-      unsubscribeSensors();
-      unsubscribeAlerts();
-      clearInterval(simulationInterval);
-    };
-  }, [db]);
-
-  const analyzeContamination = async (alert: Alert) => {
+  const analyzeContamination = async (alert: any) => {
     setIsAnalyzing(true);
     setAiInsight(null);
     try {
+      const metrics = alert.metrics || {};
       const prompt = `Analyze this water contamination event:
-      Metrics: pH: ${alert.metrics.ph}, Turbidity: ${alert.metrics.turbidity} NTU, TDS: ${alert.metrics.tds} mg/L, Chlorine: ${alert.metrics.chlorine} mg/L.
-      Thresholds: pH (6.5-8.5), Turbidity (<5), TDS (<500), Chlorine (0.2-2.0).
+      Metrics: pH: ${metrics.ph}, Turbidity: ${metrics.turbidity} NTU, TDS: ${metrics.tds} mg/L, Chlorine: ${metrics.chlorine} mg/L.
+      Thresholds: pH (${THRESHOLDS.PH.min}-${THRESHOLDS.PH.max}), Turbidity (<${THRESHOLDS.TURBIDITY.max}), TDS (<${THRESHOLDS.TDS.max}), Chlorine (${THRESHOLDS.CHLORINE.min}-${THRESHOLDS.CHLORINE.max}).
       
       Provide:
       1. Classification (Chemical, Biological, or Physical)
@@ -287,26 +236,15 @@ function AppContent() {
     }
   };
 
-  const uniqueLocations = useMemo(() => {
-    const locations = sensorData.map(s => s.location.name);
-    return Array.from(new Set(locations));
-  }, [sensorData]);
-
-  const filteredSensors = useMemo(() => {
-    if (!locationFilter) return sensorData;
-    return sensorData.filter(s => s.location.name === locationFilter);
-  }, [sensorData, locationFilter]);
-
-  const activeSensor = useMemo(() => {
-    const pool = locationFilter ? filteredSensors : sensorData;
-    return pool.find(s => s.sensorId === selectedSensor) || pool[0] || sensorData[0];
-  }, [sensorData, filteredSensors, selectedSensor, locationFilter]);
-
   function MapBoundsHandler() {
     const map = useMap();
     useEffect(() => {
       if (filteredSensors.length > 0 && !hasInitializedMap.current) {
-        const bounds = L.latLngBounds(filteredSensors.map(s => [s.location.lat, s.location.lng]));
+        const bounds = L.latLngBounds(filteredSensors.map(s => {
+          const lat = s.lat || s.location?.lat || 12.9716;
+          const lng = s.lng || s.location?.lng || 77.5946;
+          return [lat, lng];
+        }));
         map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
         hasInitializedMap.current = true;
       }
@@ -697,52 +635,51 @@ function AppContent() {
                     )}
 
                     {filteredSensors.map(s => {
-                      const isAlert = alerts.some(a => a.sensorId === s.sensorId);
+                      const sensorLat = s.lat || s.location?.lat || 12.9716;
+                      const sensorLng = s.lng || s.location?.lng || 77.5946;
+                      const hasAlert = alerts.some(a => a.sensorId === s.id && a.severity === 'high');
                       
                       return (
-                        <React.Fragment key={s.sensorId}>
+                        <React.Fragment key={s.id}>
                           <Marker 
-                            position={[s.location.lat, s.location.lng]} 
-                            eventHandlers={{ click: () => setSelectedSensor(s.sensorId) }}
+                            position={[sensorLat, sensorLng]}
+                            eventHandlers={{
+                              click: () => setSelectedSensor(s.id),
+                            }}
                             icon={L.divIcon({
                               className: 'custom-div-icon',
-                              html: `<div class="w-4 h-4 rounded-full border-2 border-white shadow-lg ${isAlert ? 'bg-danger animate-pulse' : 'bg-accent'}"></div>`,
-                              iconSize: [16, 16],
-                              iconAnchor: [8, 8]
+                              html: `<div class="w-6 h-6 rounded-full border-2 border-white shadow-lg flex items-center justify-center ${s.status === 'Critical' || hasAlert ? 'bg-danger animate-pulse' : s.status === 'Warning' ? 'bg-warning' : 'bg-success'}">
+                                       <div class="w-2 h-2 rounded-full bg-white opacity-50"></div>
+                                     </div>`,
+                              iconSize: [24, 24],
+                              iconAnchor: [12, 12]
                             })}
                           >
                             <Popup>
-                              <div className="p-2 space-y-1 min-w-[120px]">
-                                <div className="font-bold text-sm text-text-main">{s.location.name}</div>
-                                <div className="text-[10px] text-text-dim font-mono">NODE ID: {s.sensorId}</div>
-                                <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-border">
-                                  <div>
-                                    <div className="text-[8px] text-text-dim uppercase">pH</div>
-                                    <div className="text-xs font-bold">{s.metrics.ph.toFixed(2)}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[8px] text-text-dim uppercase">Turbidity</div>
-                                    <div className="text-xs font-bold">{s.metrics.turbidity.toFixed(1)}</div>
-                                  </div>
+                              <div className="p-1 space-y-1">
+                                <div className="font-bold text-xs">{s.name}</div>
+                                <div className="text-[10px] text-text-dim">{s.location}</div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 pt-2 border-t border-border">
+                                  <div className="text-[9px] font-bold">pH: {s.ph || s.metrics?.ph}</div>
+                                  <div className="text-[9px] font-bold">TURB: {s.turbidity || s.metrics?.turbidity}</div>
+                                  <div className="text-[9px] font-bold">TEMP: {s.temperature || s.metrics?.temperature}°C</div>
+                                  <div className="text-[9px] font-bold text-accent">STATUS: {s.status}</div>
                                 </div>
                               </div>
                             </Popup>
                           </Marker>
-                          {isAlert && (
-                            <>
-                              <Circle 
-                                center={[s.location.lat, s.location.lng]}
-                                radius={800}
-                                pathOptions={{ 
-                                  color: '#FF4D4F',
-                                  fillColor: '#FF4D4F',
-                                  fillOpacity: 0.15,
-                                  weight: 2,
-                                  dashArray: '5, 10'
-                                }}
-                              />
-                              <AnomalySpread center={[s.location.lat, s.location.lng]} sensorId={s.sensorId} />
-                            </>
+                          {(s.status === 'Critical' || hasAlert) && (
+                            <Circle 
+                              center={[sensorLat, sensorLng]}
+                              radius={800}
+                              pathOptions={{ 
+                                color: '#FF4D4F',
+                                fillColor: '#FF4D4F',
+                                fillOpacity: 0.15,
+                                weight: 2,
+                                dashArray: '5, 10'
+                              }}
+                            />
                           )}
                         </React.Fragment>
                       );
@@ -968,7 +905,7 @@ function AppContent() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-xl font-bold">Sensor Network</h2>
-                    <p className="text-xs text-text-dim">Monitoring {firestoreSensors.length} active nodes across the grid.</p>
+                    <p className="text-xs text-text-dim">Monitoring {sensors.length} active nodes across the grid.</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase font-bold text-text-dim">Status:</span>
@@ -990,7 +927,7 @@ function AppContent() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {firestoreSensors.map((sensor) => (
+                  {sensors.map((sensor) => (
                     <div key={sensor.id} className="bg-surface border border-border rounded-xl p-5 hover:border-accent/50 transition-all group">
                       <div className="flex items-start justify-between mb-4">
                         <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
@@ -1014,11 +951,11 @@ function AppContent() {
                       <div className="grid grid-cols-3 gap-2 py-3 border-y border-border/50">
                         <div>
                           <div className="text-[8px] text-text-dim uppercase mb-0.5">pH</div>
-                          <div className={cn("text-xs font-bold", (sensor.ph < 6.5 || sensor.ph > 8.5) && "text-danger")}>{sensor.ph}</div>
+                          <div className={cn("text-xs font-bold", (sensor.ph < THRESHOLDS.PH.min || sensor.ph > THRESHOLDS.PH.max) && "text-danger")}>{sensor.ph}</div>
                         </div>
                         <div>
                           <div className="text-[8px] text-text-dim uppercase mb-0.5">Tur</div>
-                          <div className={cn("text-xs font-bold", sensor.turbidity > 5 && "text-warning")}>{sensor.turbidity}</div>
+                          <div className={cn("text-xs font-bold", sensor.turbidity > THRESHOLDS.TURBIDITY.max && "text-warning")}>{sensor.turbidity}</div>
                         </div>
                         <div>
                           <div className="text-[8px] text-text-dim uppercase mb-0.5">Temp</div>
@@ -1027,7 +964,15 @@ function AppContent() {
                       </div>
                       <div className="mt-4 flex items-center justify-between">
                         <span className="text-[9px] font-mono text-text-dim">ID: {sensor.id}</span>
-                        <button className="text-[9px] font-bold text-accent hover:underline uppercase tracking-tighter">View Details</button>
+                        <button 
+                          onClick={() => {
+                            setSelectedSensor(sensor.id);
+                            setActivePage('dashboard');
+                          }}
+                          className="text-[9px] font-bold text-accent hover:underline uppercase tracking-tighter"
+                        >
+                          View Trends
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -1059,7 +1004,7 @@ function AppContent() {
                 </div>
 
                 <div className="bg-surface border border-border rounded-xl overflow-hidden">
-                  {firestoreAlerts
+                  {alerts
                     .filter(a => severityFilter === 'all' || a.severity === severityFilter)
                     .map((alert) => (
                     <div key={alert.id} className={cn(
@@ -1085,12 +1030,12 @@ function AppContent() {
                           <span className="text-[10px] font-mono text-text-dim">Sensor ID: {alert.sensorId}</span>
                         </div>
                         <h4 className="font-bold text-sm mb-1">{alert.message}</h4>
-                        <p className="text-[10px] text-text-dim lowercase">{new Date(alert.timestamp?.toDate()).toLocaleString()}</p>
+                        <p className="text-[10px] text-text-dim lowercase">{new Date(alert.timestamp?.seconds ? alert.timestamp.seconds * 1000 : alert.timestamp).toLocaleString()}</p>
                       </div>
                       <ChevronRight className="text-text-dim opacity-30" size={20} />
                     </div>
                   ))}
-                  {firestoreAlerts.length === 0 && (
+                  {alerts.length === 0 && (
                     <div className="p-20 text-center space-y-3">
                       <ShieldCheck className="w-12 h-12 text-success mx-auto opacity-30" />
                       <div className="text-xl font-bold">All Clear</div>
@@ -1201,10 +1146,96 @@ function AppContent() {
             )}
 
             {activePage === 'settings' && (
-              <div className="bg-surface border border-border rounded-xl p-8 text-center space-y-4">
-                <ShieldCheck className="w-12 h-12 text-text-dim mx-auto opacity-50" />
-                <h2 className="text-xl font-bold">System Settings</h2>
-                <p className="text-text-dim max-w-md mx-auto">Configure system thresholds, AI model parameters, and notification preferences.</p>
+              <div className="space-y-6">
+                <div className="bg-surface border border-border rounded-xl p-6">
+                  <div className="flex items-center gap-3 mb-6">
+                    <SettingsIcon className="w-5 h-5 text-accent" />
+                    <h2 className="text-xl font-bold">System Thresholds</h2>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-4">
+                      <h3 className="text-xs font-bold uppercase text-text-dim tracking-wider">pH Boundaries</h3>
+                      <div className="flex gap-4">
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[10px] text-text-dim uppercase font-bold">Minimum</label>
+                          <input 
+                            type="number" 
+                            step="0.1"
+                            value={THRESHOLDS.PH.min}
+                            onChange={(e) => setTHRESHOLDS(prev => ({ ...prev, PH: { ...prev.PH, min: parseFloat(e.target.value) } }))}
+                            className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:border-accent outline-none" 
+                          />
+                        </div>
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[10px] text-text-dim uppercase font-bold">Maximum</label>
+                          <input 
+                            type="number" 
+                            step="0.1"
+                            value={THRESHOLDS.PH.max}
+                            onChange={(e) => setTHRESHOLDS(prev => ({ ...prev, PH: { ...prev.PH, max: parseFloat(e.target.value) } }))}
+                            className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:border-accent outline-none" 
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h3 className="text-xs font-bold uppercase text-text-dim tracking-wider">Metric Limits</h3>
+                      <div className="flex gap-4">
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[10px] text-text-dim uppercase font-bold">Turbidity Max (NTU)</label>
+                          <input 
+                            type="number" 
+                            value={THRESHOLDS.TURBIDITY.max}
+                            onChange={(e) => setTHRESHOLDS(prev => ({ ...prev, TURBIDITY: { max: parseFloat(e.target.value) } }))}
+                            className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:border-accent outline-none" 
+                          />
+                        </div>
+                        <div className="flex-1 space-y-1.5">
+                          <label className="text-[10px] text-text-dim uppercase font-bold">TDS Max (mg/L)</label>
+                          <input 
+                            type="number" 
+                            value={THRESHOLDS.TDS.max}
+                            onChange={(e) => setTHRESHOLDS(prev => ({ ...prev, TDS: { max: parseFloat(e.target.value) } }))}
+                            className="w-full bg-bg border border-border rounded px-3 py-2 text-sm focus:border-accent outline-none" 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-8 pt-6 border-t border-border flex items-center justify-between">
+                    <p className="text-[10px] text-text-dim italic">Changes are applied immediately to all real-time monitors.</p>
+                    <button 
+                      onClick={() => alert("Thresholds persisted to local cache.")}
+                      className="bg-accent text-bg px-6 py-2 rounded font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-opacity"
+                    >
+                      Save Configuration
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-surface border border-border rounded-xl p-6">
+                  <div className="flex items-center gap-3 mb-6 font-bold">
+                    <ShieldAlert className="w-5 h-5 text-warning" />
+                    System Rules
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between p-3 bg-bg/40 rounded border border-border">
+                      <span className="text-xs">Auto-Alert on Critical Anomaly</span>
+                      <div className="w-10 h-5 bg-success rounded-full flex items-center px-1">
+                        <div className="w-3 h-3 bg-white rounded-full ml-auto"></div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-bg/40 rounded border border-border">
+                      <span className="text-xs">Push Notifications (Browser)</span>
+                      <div className="w-10 h-5 bg-border rounded-full flex items-center px-1">
+                        <div className="w-3 h-3 bg-white rounded-full"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
