@@ -693,13 +693,13 @@ function AppContent() {
                       </>
                     )}
 
-                    {filteredSensors.map(s => {
+                    {filteredSensors.map((s, i) => {
                       const sensorLat = s.lat || s.location?.lat || 12.9716;
                       const sensorLng = s.lng || s.location?.lng || 77.5946;
                       const hasAlert = alerts.some(a => a.sensorId === s.id && a.severity === 'high');
                       
                       return (
-                        <React.Fragment key={s.id}>
+                        <React.Fragment key={`${s.id}-${i}`}>
                           <Marker 
                             position={[sensorLat, sensorLng]}
                             eventHandlers={{
@@ -780,9 +780,9 @@ function AppContent() {
                       >
                         ALL
                       </button>
-                      {uniqueLocations.map(loc => (
+                      {uniqueLocations.map((loc, i) => (
                         <button 
-                          key={loc}
+                          key={`${loc}-${i}`}
                           onClick={() => setLocationFilter(loc)}
                           className={cn(
                             "px-2.5 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition-all",
@@ -813,7 +813,7 @@ function AppContent() {
                         />
                         <Area 
                           type="monotone" 
-                          dataKey={`${activeSensor?.sensorId}_ph`} 
+                          dataKey={`${activeSensor?.id}_ph`} 
                           stroke="#58A6FF" 
                           fillOpacity={1} 
                           fill="url(#colorPh)" 
@@ -839,9 +839,9 @@ function AppContent() {
                         <p className="text-xs font-medium">No anomalies detected in the current stream.</p>
                       </div>
                     ) : (
-                      alerts.map(alert => (
+                          alerts.map((alert, i) => (
                         <motion.div 
-                          key={alert.id}
+                          key={`${alert.id}-${i}`}
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           className="p-4 border-b border-border hover:bg-bg/50 transition-colors cursor-pointer group"
@@ -986,8 +986,8 @@ function AppContent() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sensors.map((sensor) => (
-                    <div key={sensor.id} className="bg-surface border border-border rounded-xl p-5 hover:border-accent/50 transition-all group">
+                  {sensors.map((sensor, i) => (
+                    <div key={`${sensor.id}-${i}`} className="bg-surface border border-border rounded-xl p-5 hover:border-accent/50 transition-all group">
                       <div className="flex items-start justify-between mb-4">
                         <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
                           <Activity size={20} />
@@ -1065,8 +1065,8 @@ function AppContent() {
                 <div className="bg-surface border border-border rounded-xl overflow-hidden">
                   {alerts
                     .filter(a => severityFilter === 'all' || a.severity === severityFilter)
-                    .map((alert) => (
-                    <div key={alert.id} className={cn(
+                    .map((alert, i) => (
+                    <div key={`${alert.id}-${i}`} className={cn(
                       "p-5 border-b border-border last:border-0 hover:bg-bg/40 transition-colors flex items-center gap-4",
                       alert.severity === 'high' && "bg-danger/5"
                     )}>
@@ -1133,7 +1133,7 @@ function AppContent() {
                             <XAxis dataKey="time" stroke="#8B949E" fontSize={9} tickLine={false} axisLine={false} minTickGap={30} />
                             <YAxis stroke="#8B949E" fontSize={9} tickLine={false} axisLine={false} domain={[5, 10]} />
                             <Tooltip contentStyle={{ backgroundColor: '#161B22', border: '1px solid #30363D', borderRadius: '8px', fontSize: '10px' }} />
-                            <Area type="monotone" dataKey={`${activeSensor?.sensorId}_ph`} stroke="#58A6FF" fillOpacity={1} fill="url(#colorPh)" strokeWidth={2} />
+                            <Area type="monotone" dataKey={`${activeSensor?.id}_ph`} stroke="#58A6FF" fillOpacity={1} fill="url(#colorPh)" strokeWidth={2} />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -1149,7 +1149,7 @@ function AppContent() {
                             <XAxis dataKey="time" stroke="#8B949E" fontSize={9} tickLine={false} axisLine={false} />
                             <YAxis stroke="#8B949E" fontSize={9} tickLine={false} axisLine={false} />
                             <Tooltip contentStyle={{ backgroundColor: '#161B22', border: '1px solid #30363D', borderRadius: '8px', fontSize: '10px' }} />
-                            <Line type="stepAfter" dataKey={`${activeSensor?.sensorId}_turbidity`} stroke="#D29922" strokeWidth={2} dot={false} />
+                            <Line type="stepAfter" dataKey={`${activeSensor?.id}_turbidity`} stroke="#D29922" strokeWidth={2} dot={false} />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -1165,7 +1165,7 @@ function AppContent() {
                             <XAxis dataKey="time" stroke="#8B949E" fontSize={9} tickLine={false} axisLine={false} />
                             <YAxis stroke="#8B949E" fontSize={9} tickLine={false} axisLine={false} domain={[20, 30]} />
                             <Tooltip contentStyle={{ backgroundColor: '#161B22', border: '1px solid #30363D', borderRadius: '8px', fontSize: '10px' }} />
-                            <Area type="monotone" dataKey={(d) => d[`${activeSensor?.sensorId}_ph`] ? 23 + Math.random() * 4 : 25} stroke="#238636" fill="#23863620" strokeWidth={2} />
+                            <Area type="monotone" dataKey={(d) => d[`${activeSensor?.id}_ph`] ? 23 + Math.random() * 4 : 25} stroke="#238636" fill="#23863620" strokeWidth={2} />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -1184,7 +1184,7 @@ function AppContent() {
                       <PredictiveChart 
                         data={history.map((h, i) => ({ 
                           x: i, 
-                          y: h[`${activeSensor?.sensorId}_ph`] || 0 
+                          y: h[`${activeSensor?.id}_ph`] || 0 
                         }))} 
                         label="pH" 
                       />
@@ -1193,7 +1193,7 @@ function AppContent() {
                       <PredictiveChart 
                         data={history.map((h, i) => ({ 
                           x: i, 
-                          y: h[`${activeSensor?.sensorId}_turbidity`] || 0 
+                          y: h[`${activeSensor?.id}_turbidity`] || 0 
                         }))} 
                         label="Turbidity" 
                         unit=" NTU"
