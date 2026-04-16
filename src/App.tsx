@@ -38,7 +38,7 @@ import { cn } from './lib/utils';
 import { useTheme } from './components/ThemeProvider';
 import { SensorData, Alert } from './types';
 import { GoogleGenAI } from "@google/genai";
-import { db, firebaseConfig } from './lib/firebase';
+import { db, firebaseConfig, auth } from './lib/firebase';
 import { seedDatabase } from './lib/seedData';
 const useAuth = () => ({
   user: { email: 'guest@hydroguard.io', uid: 'guest' },
@@ -54,6 +54,57 @@ const ProtectedRoute = ({ children }: any) => <>{children}</>;
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { ChevronRight } from 'lucide-react';
 import PredictiveChart from './components/PredictiveChart';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string;
+    email?: string | null;
+    emailVerified?: boolean;
+    isAnonymous?: boolean;
+    tenantId?: string | null;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // Fix Leaflet marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -124,14 +175,22 @@ function AppContent() {
           chlorine: (doc.data() as any).chlorine || 1.2
         }
       }));
-      setSensors(data);
+      // Deduplicate on logical ID in case multiple seedings occurred
+      const uniqueData = Array.from(new Map(data.map(item => [item.id, item])).values());
+      setSensors(uniqueData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'sensors');
     });
 
     const alertsRef = collection(db, 'alerts');
     const qAlerts = query(alertsRef, orderBy('timestamp', 'desc'));
     const unsubscribeAlerts = onSnapshot(qAlerts, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAlerts(data);
+      // Deduplicate alerts by ID
+      const uniqueAlerts = Array.from(new Map(data.map(item => [item.id, item])).values());
+      setAlerts(uniqueAlerts);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'alerts');
     });
 
     return () => {
@@ -1291,9 +1350,63 @@ function AppContent() {
   );
 }
 
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
+  constructor(props: {children: React.ReactNode}) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Uncaught runtime error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      // Attempt to parse FirestoreErrorInfo
+      let errorMessage = this.state.error?.message || "An unexpected error occurred.";
+      try {
+        const parsed = JSON.parse(this.state.error?.message || "");
+        if (parsed.error) {
+          errorMessage = `Firestore Access Denied (${parsed.operationType} @ ${parsed.path}): ${parsed.error}`;
+        }
+      } catch (e) {
+        // Not a JSON error, leave as is
+      }
+
+      return (
+        <div className="min-h-screen bg-[#0E1117] text-[#C9D1D9] flex items-center justify-center p-6 font-mono">
+          <div className="bg-[#161B22] border border-[#FF4D4F] p-6 rounded-xl max-w-lg w-full">
+            <h2 className="text-xl font-bold text-[#FF4D4F] mb-4 flex items-center gap-2">
+              <ShieldAlert className="w-6 h-6" />
+              Runtime Error Detected
+            </h2>
+            <div className="bg-[#0E1117] border border-[#30363D] p-3 rounded font-mono text-xs overflow-auto">
+              <p>{errorMessage}</p>
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="mt-6 w-full py-2 bg-[#58A6FF] text-[#0E1117] rounded font-bold uppercase tracking-wider hover:opacity-90 transition-opacity"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <AppContent />
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   );
 }
 

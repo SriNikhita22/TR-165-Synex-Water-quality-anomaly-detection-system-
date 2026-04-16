@@ -55,7 +55,7 @@ const PredictiveChart: React.FC<PredictiveChartProps> = ({ data, label, unit }) 
         // The data array for the predicted line must be padded with nulls 
         // until the point where the actual data ends.
         data: [
-          ...Array(data.length - 1).fill(null),
+          ...Array(Math.max(0, data.length - 1)).fill(null),
           ...predictions.map(p => p.y)
         ],
         borderColor: '#FF4D4F',
