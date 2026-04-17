@@ -53,7 +53,7 @@ const useAuth = () => ({
 });
 // import ProtectedRoute from './context/ProtectedRoute';
 const ProtectedRoute = ({ children }: any) => <>{children}</>;
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, addDoc, serverTimestamp, setDoc, doc } from 'firebase/firestore';
 import { ChevronRight } from 'lucide-react';
 import PredictiveChart from './components/PredictiveChart';
 
@@ -164,7 +164,7 @@ function AppContent() {
     TOKYO: { name: 'Tokyo', center: [35.6762, 139.6503] as [number, number], zoom: 12 },
     SYDNEY: { name: 'Sydney', center: [-33.8688, 151.2093] as [number, number], zoom: 12 },
   };
-  const [currentRegion, setCurrentRegion] = useState<keyof typeof REGIONS>('BANGALORE');
+  const [currentRegion, setCurrentRegion] = useState<keyof typeof REGIONS>('GLOBAL');
 
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
@@ -259,7 +259,22 @@ function AppContent() {
           };
         });
 
-        // 2. Synchronize the charts array against the jittered state instantly
+        // 2. Create alert documents for new anomalies
+        updatedSensors.forEach(s => {
+           const prevS = prevSensors.find(ps => ps.id === s.id);
+           if (s.status !== 'Active' && prevS?.status === 'Active') {
+              addDoc(collection(db, 'alerts'), {
+                sensorId: s.id,
+                sensorName: s.name,
+                status: s.status,
+                message: `Anomaly detected: pH ${s.metrics.ph}, Turbidity ${s.metrics.turbidity}`,
+                timestamp: serverTimestamp(),
+                severity: s.status === 'Critical' ? 'high' : 'medium'
+              }).catch(console.error);
+           }
+        });
+
+        // 3. Synchronize the charts array against the jittered state instantly
         setHistory(prevHistory => {
           const newPoint = {
             time: new Date().toLocaleTimeString(),
@@ -292,6 +307,36 @@ function AppContent() {
   const uniqueLocations = useMemo(() => 
     Array.from(new Set(sensors.map(s => s.location))).filter(Boolean),
   [sensors]);
+
+  const classifyContamination = (metrics: any, history: any[]) => {
+    const { ph, turbidity, tds, chlorine } = metrics;
+    
+    // Check trend for biological (requires history)
+    const isGradualChange = history.length > 5;
+    let turbIncreasing = false;
+    let chlorineDecreasing = false;
+    
+    if (isGradualChange) {
+       const recent = history.slice(-5);
+       turbIncreasing = recent.every((point, i) => i === 0 || point.turbidity > recent[i-1].turbidity);
+       chlorineDecreasing = recent.every((point, i) => i === 0 || point.chlorine < recent[i-1].chlorine);
+    }
+    
+    if (isGradualChange && turbIncreasing && chlorineDecreasing) {
+      return { type: 'Biological', confidence: 85, reason: 'Gradual pathogen accumulation detected via turbidity trends.' };
+    }
+    
+    // Chemical/Physical checks
+    if (ph < 6 || ph > 9 || Math.abs(chlorine - 1.2) > 0.6) {
+      return { type: 'Chemical', confidence: 90, reason: 'Abnormal pH or chlorine deviation detected.' };
+    }
+    
+    if (turbidity > 10 || tds > 600) {
+      return { type: 'Physical', confidence: 80, reason: 'High turbidity or mineral content indicative of particulate matter.' };
+    }
+    
+    return { type: 'None', confidence: 0, reason: 'No anomaly pattern detected.' };
+  };
 
   const getRecommendation = (type: string, severity: string) => {
     const ctype = type.toLowerCase();
@@ -351,6 +396,7 @@ Answer in 1-2 lines. Be highly specific and technical about the probable cause (
   function MapBoundsHandler() {
     const map = useMap();
     useEffect(() => {
+      if (!map) return; // Safety check
       // If a region is actively selected, override auto-bounds
       if (currentRegion !== 'GLOBAL') {
         const region = REGIONS[currentRegion];
@@ -374,6 +420,24 @@ Answer in 1-2 lines. Be highly specific and technical about the probable cause (
     }, [filteredSensors, map, currentRegion]);
     return null;
   }
+
+  const triggerSimulation = () => {
+    // Only simulate on first sensor for now
+    const targetSensor = sensors[0];
+    if(!targetSensor) return;
+    
+    setSensors(prev => prev.map(s => {
+      if(s.id === targetSensor.id) {
+        return {
+          ...s,
+          ph: 5.0, // Critical
+          turbidity: 15.0, // Critical
+          status: 'Critical'
+        };
+      }
+      return s;
+    }));
+  };
 
   function AnomalySpread({ center, sensorId, maxRadius = 1000 }: { center: [number, number], sensorId: string, maxRadius?: number }) {
     const [radius, setRadius] = useState(50);
@@ -604,6 +668,13 @@ Return EXACTLY in this JSON format:
           <button className="p-1.5 hover:bg-border rounded transition-colors hidden md:block" onClick={() => window.location.reload()}>
             <RefreshCw className="w-4 h-4 text-text-dim" />
           </button>
+          <button 
+            className="p-1.5 hover:bg-danger/20 rounded transition-colors hidden md:block text-danger border border-danger/50" 
+            onClick={triggerSimulation}
+            title="Simulate Anomaly"
+          >
+            <AlertTriangle className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
@@ -751,6 +822,12 @@ Return EXACTLY in this JSON format:
                           <Popup onClose={() => setClickedLocation(null)}>
                             <div className="p-2 space-y-2 min-w-[200px]">
                               <div className="text-[10px] font-bold text-accent uppercase tracking-wider">Manual Probe Location</div>
+                              {/* Always display contamination badge if anomaly is detected */}
+                              {clickedLocation.insight?.anomaly === 'Yes' && (
+                                <div className="text-[10px] font-bold p-1 rounded text-center uppercase tracking-wider bg-danger/10 text-danger">
+                                  {clickedLocation.insight.type} Anomaly Detected
+                                </div>
+                              )}
                               <div className="text-[9px] font-mono text-text-dim">
                                 LAT: {clickedLocation.lat.toFixed(6)}<br/>
                                 LNG: {clickedLocation.lng.toFixed(6)}
@@ -1054,7 +1131,7 @@ Return EXACTLY in this JSON format:
                                     className="overflow-hidden"
                                   >
                                     <div className="bg-bg/50 rounded-lg p-3 border border-border space-y-2">
-                                      {alert.actions.map((action, i) => (
+                                      {alert.actions?.map((action, i) => (
                                         <div key={i} className="flex items-start gap-2 text-[10px]">
                                           {i === 0 ? <ShieldAlert className="w-3 h-3 text-danger shrink-0 mt-0.5" /> : <Wrench className="w-3 h-3 text-accent shrink-0 mt-0.5" />}
                                           <span className={i === 0 ? "font-bold text-danger" : "text-text-main"}>{action}</span>
@@ -1247,6 +1324,16 @@ Return EXACTLY in this JSON format:
                           )}>
                             {alert.severity}
                           </span>
+                          
+                          {/* Contamination Classification Badge */}
+                          <span className={cn(
+                             "text-[10px] font-bold uppercase py-0.5 px-1.5 rounded",
+                             alert.metrics?.ph < 6 || alert.metrics?.ph > 9 ? "bg-purple-500 text-white" :
+                             alert.metrics?.turbidity > 10 ? "bg-orange-500 text-white" : "bg-green-500 text-white"
+                          )}>
+                            {alert.metrics?.ph < 6 || alert.metrics?.ph > 9 ? 'Chemical' : alert.metrics?.turbidity > 10 ? 'Physical' : 'Biological'}
+                          </span>
+
                           <span className="text-[10px] font-mono text-text-dim">Sensor ID: {alert.sensorId}</span>
                         </div>
                         <h4 className="font-bold text-sm mb-1">{alert.message}</h4>
@@ -1463,7 +1550,14 @@ Return EXACTLY in this JSON format:
                   <div className="mt-8 pt-6 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
                     <p className="text-[10px] text-text-dim italic text-center md:text-left">Changes are applied immediately to all real-time monitors.</p>
                     <button 
-                      onClick={() => alert("Thresholds persisted to local cache.")}
+                      onClick={async () => {
+                        try {
+                          await setDoc(doc(db, 'settings', 'thresholds'), THRESHOLDS);
+                          console.log("Thresholds persisted:", THRESHOLDS);
+                        } catch (err) {
+                          console.error("Failed to save thresholds:", err);
+                        }
+                      }}
                       className="w-full md:w-auto bg-accent text-bg px-6 py-3 md:py-2 rounded font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-opacity"
                     >
                       Save Configuration
