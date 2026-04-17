@@ -155,6 +155,17 @@ function AppContent() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const hasInitializedMap = useRef(false);
 
+  // Region configuration
+  const REGIONS = {
+    GLOBAL: { name: 'Global', center: [20, 0] as [number, number], zoom: 2 },
+    BANGALORE: { name: 'Bangalore', center: [12.9716, 77.5946] as [number, number], zoom: 12 },
+    NEWYORK: { name: 'New York', center: [40.7128, -74.0060] as [number, number], zoom: 12 },
+    LONDON: { name: 'London', center: [51.5074, -0.1278] as [number, number], zoom: 12 },
+    TOKYO: { name: 'Tokyo', center: [35.6762, 139.6503] as [number, number], zoom: 12 },
+    SYDNEY: { name: 'Sydney', center: [-33.8688, 151.2093] as [number, number], zoom: 12 },
+  };
+  const [currentRegion, setCurrentRegion] = useState<keyof typeof REGIONS>('BANGALORE');
+
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
 
@@ -340,20 +351,31 @@ Answer in 1-2 lines. Be highly specific and technical about the probable cause (
   function MapBoundsHandler() {
     const map = useMap();
     useEffect(() => {
+      // If a region is actively selected, override auto-bounds
+      if (currentRegion !== 'GLOBAL') {
+        const region = REGIONS[currentRegion];
+        map.setView(region.center, region.zoom);
+        hasInitializedMap.current = true;
+        return;
+      }
+
       if (filteredSensors.length > 0 && !hasInitializedMap.current) {
         const bounds = L.latLngBounds(filteredSensors.map(s => {
-          const lat = s.lat || s.location?.lat || 12.9716;
-          const lng = s.lng || s.location?.lng || 77.5946;
+          const lat = s.lat || s.location?.lat || 20;
+          const lng = s.lng || s.location?.lng || 0;
           return [lat, lng];
         }));
         map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
         hasInitializedMap.current = true;
+      } else if (!hasInitializedMap.current && filteredSensors.length === 0) {
+        // Safe global view fallback if Firebase drops data temporarily
+        map.setView([20, 0], 2);
       }
-    }, [filteredSensors, map]);
+    }, [filteredSensors, map, currentRegion]);
     return null;
   }
 
-  function AnomalySpread({ center, sensorId }: { center: [number, number], sensorId: string }) {
+  function AnomalySpread({ center, sensorId, maxRadius = 1000 }: { center: [number, number], sensorId: string, maxRadius?: number }) {
     const [radius, setRadius] = useState(50);
     const [opacity, setOpacity] = useState(0.3);
     
@@ -363,18 +385,18 @@ Answer in 1-2 lines. Be highly specific and technical about the probable cause (
       
       const animate = (time: number) => {
         if (!start) start = time;
-        const progress = (time - start) % 3000; // 3 second loop
-        const factor = progress / 3000;
+        const progress = (time - start) % 4000; // 4 second loop
+        const factor = progress / 4000;
         
-        setRadius(50 + factor * 950); // 50m to 1000m
-        setOpacity(0.3 * (1 - factor)); // Fade out
+        setRadius(50 + factor * (maxRadius - 50)); 
+        setOpacity(0.4 * (1 - factor)); // Fade out
         
         frame = requestAnimationFrame(animate);
       };
       
       frame = requestAnimationFrame(animate);
       return () => cancelAnimationFrame(frame);
-    }, []);
+    }, [maxRadius]);
 
     return (
       <Circle 
@@ -384,15 +406,10 @@ Answer in 1-2 lines. Be highly specific and technical about the probable cause (
           color: '#FF4D4F',
           fillColor: '#FF4D4F',
           fillOpacity: opacity,
-          weight: 1,
-          dashArray: '5, 5'
+          weight: 2,
+          dashArray: '10, 10'
         }}
-      >
-        <Popup>
-          <div className="text-[10px] font-bold text-danger uppercase">Active Contamination Spread</div>
-          <div className="text-[8px] text-text-dim">Sensor: {sensorId}</div>
-        </Popup>
-      </Circle>
+      />
     );
   }
 
@@ -536,7 +553,22 @@ Return EXACTLY in this JSON format:
             STREAM: {Date.now() - lastDataTimestamp < 10000 ? "ACTIVE" : "INACTIVE"}
           </div>
           <div className="hidden lg:block text-text-dim uppercase">LATENCY: {latency}ms</div>
-          <div className="hidden sm:block text-text-dim uppercase">NODES: {sensorData.length}/128</div>
+          <div className="hidden sm:block text-text-dim uppercase">NODES: {sensors.length}/128</div>
+          <div className="hidden md:flex items-center gap-2">
+            <select
+              value={currentRegion}
+              onChange={(e) => {
+                const regionKey = e.target.value as keyof typeof REGIONS;
+                setCurrentRegion(regionKey);
+              }}
+              className="bg-bg border border-border text-[10px] uppercase font-bold px-2 py-1 rounded cursor-pointer hover:border-accent transition-colors"
+            >
+              {Object.entries(REGIONS).map(([key, region]) => (
+                <option key={key} value={key}>{region.name}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="hidden md:flex items-center bg-bg border border-border rounded-full p-0.5 ml-0 md:ml-2">
             <ProtectedRoute allowedRoles={['ADMIN', 'OPERATOR']}>
               <button 
@@ -757,7 +789,23 @@ Return EXACTLY in this JSON format:
                                     "text-[10px] font-bold p-1.5 rounded text-center uppercase tracking-wider",
                                     clickedLocation.insight.anomaly === "Yes" ? "bg-danger/10 text-danger" : "bg-success/10 text-success"
                                   )}>
-                                    {clickedLocation.insight.anomaly === "Yes" ? `DETECTED: ${clickedLocation.insight.type}` : "CLEAR • NO CONTAMINATION"}
+                                    {clickedLocation.insight.anomaly === "Yes" ? (
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center justify-center gap-2">
+                                          <span className={cn(
+                                            "px-2 py-0.5 rounded-[4px] text-[8px] font-extrabold text-white uppercase",
+                                            clickedLocation.insight.type === 'Chemical' ? "bg-purple-500" :
+                                            clickedLocation.insight.type === 'Biological' ? "bg-green-500" : "bg-orange-500"
+                                          )}>
+                                            {clickedLocation.insight.type}
+                                          </span>
+                                          <span>ANOMALY DETECTED</span>
+                                        </div>
+                                        <div className="text-[11px] text-danger/80">
+                                          {clickedLocation.insight.confidence}% CONFIDENCE
+                                        </div>
+                                      </div>
+                                    ) : "CLEAR • NO CONTAMINATION"}
                                   </div>
 
                                   {clickedLocation.insight.anomaly === "Yes" && (
@@ -800,25 +848,19 @@ Return EXACTLY in this JSON format:
                           </Popup>
                         </Marker>
                         {clickedLocation.insight?.anomaly === "Yes" && (
-                          <Circle 
-                            center={[clickedLocation.lat, clickedLocation.lng]}
-                            radius={clickedLocation.insight?.radius || 1200}
-                            pathOptions={{ 
-                              color: '#FF4D4F',
-                              fillColor: '#FF4D4F',
-                              fillOpacity: 0.1,
-                              weight: 1,
-                              dashArray: '10, 10'
-                            }}
+                          <AnomalySpread 
+                            center={[clickedLocation.lat, clickedLocation.lng]} 
+                            sensorId={`PROBE-${clickedLocation.lat.toFixed(2)}`} 
                           />
                         )}
                       </>
                     )}
 
                     {filteredSensors.map((s, i) => {
-                      const sensorLat = s.lat || s.location?.lat || 12.9716;
-                      const sensorLng = s.lng || s.location?.lng || 77.5946;
+                      const sensorLat = s.lat || s.location?.lat || 20;
+                      const sensorLng = s.lng || s.location?.lng || 0;
                       const hasAlert = alerts.some(a => a.sensorId === s.id && a.severity === 'high');
+                      const isCritical = s.status === 'Critical' || hasAlert;
                       
                       return (
                         <React.Fragment key={`${s.id}-${i}`}>
@@ -829,7 +871,7 @@ Return EXACTLY in this JSON format:
                             }}
                             icon={L.divIcon({
                               className: 'custom-div-icon',
-                              html: `<div class="w-6 h-6 rounded-full border-2 border-white shadow-lg flex items-center justify-center ${s.status === 'Critical' || hasAlert ? 'bg-danger animate-pulse' : s.status === 'Warning' ? 'bg-warning' : 'bg-success'}">
+                              html: `<div class="w-6 h-6 rounded-full border-2 border-white shadow-lg flex items-center justify-center transition-all ${isCritical ? 'bg-danger marker-glow-danger' : s.status === 'Warning' ? 'bg-warning' : 'bg-success'}">
                                        <div class="w-2 h-2 rounded-full bg-white opacity-50"></div>
                                      </div>`,
                               iconSize: [24, 24],
@@ -1236,28 +1278,37 @@ Return EXACTLY in this JSON format:
                   </div>
 
                   <div className="mb-8 p-4 bg-bg rounded-xl border border-border">
-                    <h3 className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-4 border-b border-border pb-2">AI System Performance Metrics</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                      <div>
-                        <div className="text-[9px] text-text-dim uppercase">Precision</div>
-                        <div className="text-lg font-bold text-accent">94.2%</div>
-                      </div>
-                      <div>
-                        <div className="text-[9px] text-text-dim uppercase">Recall</div>
-                        <div className="text-lg font-bold text-accent">96.8%</div>
-                      </div>
-                      <div>
-                        <div className="text-[9px] text-text-dim uppercase">Alert Latency</div>
-                        <div className="text-lg font-bold text-warning">1.2s</div>
-                      </div>
-                      <div>
-                        <div className="text-[9px] text-text-dim uppercase">False Alert Rate</div>
-                        <div className="text-lg font-bold text-success">2.1%</div>
-                      </div>
-                      <div>
-                        <div className="text-[9px] text-text-dim uppercase">Spatial Accuracy</div>
-                        <div className="text-lg font-bold text-accent">±8.5m</div>
-                      </div>
+                    <h3 className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-4 border-b border-border pb-2 flex items-center gap-2">
+                      <Activity size={12} className="text-accent" />
+                      AI Core System Performance
+                    </h3>
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                      {[
+                        { label: 'Precision', value: '94.2', unit: '%', status: 'success', meta: 'HIGH', icon: ShieldCheck },
+                        { label: 'Recall', value: '96.8', unit: '%', status: 'success', meta: 'STABLE', icon: Activity },
+                        { label: 'Latency', value: '1.2', unit: 's', status: 'warning', meta: 'NOMINAL', icon: RefreshCw },
+                        { label: 'False Alerts', value: '2.1', unit: '%', status: 'success', meta: 'OPTIMAL', icon: AlertTriangle },
+                        { label: 'Accuracy', value: '±8.5', unit: 'm', status: 'success', meta: 'SPATIAL', icon: MapIcon },
+                      ].map((item, i) => (
+                        <div key={i} className="bg-surface border border-border p-3 rounded-lg shadow-sm hover:border-accent/30 transition-all cursor-default group">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-[8px] font-bold text-text-dim uppercase tracking-tighter">{item.label}</div>
+                            <item.icon size={12} className={cn(
+                              item.status === 'success' ? 'text-success' : 'text-warning'
+                            )} />
+                          </div>
+                          <div className="flex items-baseline gap-0.5">
+                            <span className="text-xl font-bold font-mono group-hover:text-accent transition-colors">{item.value}</span>
+                            <span className="text-[10px] text-text-dim font-bold">{item.unit}</span>
+                          </div>
+                          <div className={cn(
+                            "text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded w-fit capitalize",
+                            item.status === 'success' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'
+                          )}>
+                            {item.meta}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                   
